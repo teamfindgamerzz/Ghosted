@@ -94,33 +94,183 @@ const commands = [
     .addStringOption(o => o.setName("name").setDescription("New nickname").setRequired(true)),
 
   new SlashCommandBuilder().setName("history").setDescription("View recent moderation actions")
-    .addUserOption(o => o.setName("user").setDescription("Member").setRequired(true))
-].map(c => c.toJSON());
+    .addUserOption(o => o.setName("user").setDescription("Member").setRequired(true)),
 
-const adminCommands = new Set(commands.map(c => c.name));
+  new SlashCommandBuilder().setName("role").setDescription("Role management")
+    .addSubcommand(s => s.setName("give").setDescription("Give a role to a member")
+      .addUserOption(o => o.setName("user").setDescription("Member").setRequired(true))
+      .addRoleOption(o => o.setName("role").setDescription("Role").setRequired(true)))
+    .addSubcommand(s => s.setName("remove").setDescription("Remove a role from a member")
+      .addUserOption(o => o.setName("user").setDescription("Member").setRequired(true))
+      .addRoleOption(o => o.setName("role").setDescription("Role").setRequired(true)))
+    .addSubcommand(s => s.setName("create").setDescription("Create a role")
+      .addStringOption(o => o.setName("name").setDescription("Role name").setRequired(true)))
+    .addSubcommand(s => s.setName("delete").setDescription("Delete a role")
+      .addRoleOption(o => o.setName("role").setDescription("Role").setRequired(true)))
+    .addSubcommand(s => s.setName("edit").setDescription("Rename a role")
+      .addRoleOption(o => o.setName("role").setDescription("Role").setRequired(true))
+      .addStringOption(o => o.setName("name").setDescription("New name").setRequired(true)))
+    .addSubcommand(s => s.setName("info").setDescription("Show role information")
+      .addRoleOption(o => o.setName("role").setDescription("Role").setRequired(true)))
+    .addSubcommand(s => s.setName("all").setDescription("List all server roles"))
+    .addSubcommand(s => s.setName("bots").setDescription("Give a role to all bots")
+      .addRoleOption(o => o.setName("role").setDescription("Role").setRequired(true)))
+    .addSubcommand(s => s.setName("humans").setDescription("Give a role to all human members")
+      .addRoleOption(o => o.setName("role").setDescription("Role").setRequired(true)))
+    .addSubcommand(s => s.setName("add-all").setDescription("Give a role to all members")
+      .addRoleOption(o => o.setName("role").setDescription("Role").setRequired(true))
+      .addBooleanOption(o => o.setName("confirm").setDescription("Confirm this action").setRequired(true)))
+    .addSubcommand(s => s.setName("remove-all").setDescription("Remove a role from all members")
+      .addRoleOption(o => o.setName("role").setDescription("Role").setRequired(true))
+      .addBooleanOption(o => o.setName("confirm").setDescription("Confirm this action").setRequired(true)))
+    .addSubcommand(s => s.setName("color").setDescription("Change a role color")
+      .addRoleOption(o => o.setName("role").setDescription("Role").setRequired(true))
+      .addStringOption(o => o.setName("hex").setDescription("Hex color, e.g. #FF0000").setRequired(true)))
+    .addSubcommand(s => s.setName("icon").setDescription("Set a role icon")
+      .addRoleOption(o => o.setName("role").setDescription("Role").setRequired(true))
+      .addAttachmentOption(o => o.setName("image").setDescription("Icon image").setRequired(true)))
+    .addSubcommand(s => s.setName("list").setDescription("List server roles"))
+].map(c => c.toJSON());
 
 client.once("ready", () => {
   console.log(`Ghosted online as ${client.user.tag}`);
 });
 
 client.on("interactionCreate", async interaction => {
-  if (!interaction.isChatInputCommand()) return;
-  if (!interaction.guild) return;
+  if (!interaction.isChatInputCommand() || !interaction.guild) return;
 
   const { commandName, guild, member, options, channel } = interaction;
-
-  if (!member.permissions.has(PermissionFlagsBits.ModerateMembers) &&
-      !member.permissions.has(PermissionFlagsBits.Administrator)) {
-    return interaction.reply({
-      content: "You need the Moderate Members permission to use moderation commands.",
-      ephemeral: true
-    });
-  }
-
   const botMember = guild.members.me;
   const reply = content => interaction.reply({ content, ephemeral: true });
 
   try {
+    if (commandName === "role") {
+      if (!member.permissions.has(PermissionFlagsBits.ManageRoles)) {
+        return reply("You need Manage Roles permission.");
+      }
+
+      const sub = options.getSubcommand();
+      const role = options.getRole("role");
+      const botHighest = botMember.roles.highest.position;
+
+      if (role && (role.managed || role.position >= botHighest)) {
+        return reply("I cannot manage that role. Check my role hierarchy.");
+      }
+
+      if (role && role.position >= member.roles.highest.position &&
+          guild.ownerId !== interaction.user.id) {
+        return reply("You cannot manage a role equal to or higher than your highest role.");
+      }
+
+      switch (sub) {
+        case "give":
+        case "remove": {
+          const user = options.getUser("user");
+          const target = await guild.members.fetch(user.id).catch(() => null);
+          if (!target) return reply("Member not found.");
+
+          if (target.roles.highest.position >= botHighest) {
+            return reply("My role must be above the member's highest role.");
+          }
+
+          if (sub === "give") await target.roles.add(role);
+          else await target.roles.remove(role);
+
+          return reply(`${sub === "give" ? "Added" : "Removed"} ${role.name} ${sub === "give" ? "to" : "from"} ${user.tag}.`);
+        }
+
+        case "create": {
+          const name = options.getString("name");
+          const created = await guild.roles.create({
+            name,
+            reason: `Created by ${interaction.user.tag}`
+          });
+          return reply(`Created role: ${created.name}`);
+        }
+
+        case "delete":
+          await role.delete(`Deleted by ${interaction.user.tag}`);
+          return reply(`Deleted role ${role.name}.`);
+
+        case "edit": {
+          const name = options.getString("name");
+          await role.setName(name, `Edited by ${interaction.user.tag}`);
+          return reply(`Renamed role to ${name}.`);
+        }
+
+        case "info":
+          return reply(
+            `Role: ${role.name}\nID: ${role.id}\nMembers: ${role.members.size}\nColor: ${role.hexColor}\nPosition: ${role.position}`
+          );
+
+        case "all":
+        case "list": {
+          const roles = guild.roles.cache
+            .filter(r => r.id !== guild.id)
+            .sort((a, b) => b.position - a.position)
+            .map(r => `${r.name} — ${r.members.size} members`);
+
+          return reply(roles.slice(0, 30).join("\n") || "No roles found.");
+        }
+
+        case "bots":
+        case "humans":
+        case "add-all":
+        case "remove-all": {
+          const bulk = ["add-all", "remove-all"].includes(sub);
+
+          if (bulk && !options.getBoolean("confirm")) {
+            return reply("You must confirm this bulk action.");
+          }
+
+          const members = await guild.members.fetch();
+          const selected = members.filter(m => {
+            if (m.id === client.user.id) return false;
+            if (m.roles.highest.position >= botHighest) return false;
+            if (sub === "bots") return m.user.bot;
+            if (sub === "humans") return !m.user.bot;
+            return true;
+          });
+
+          if (selected.size > 100) {
+            return reply("This operation is limited to 100 members at a time.");
+          }
+
+          await interaction.deferReply({ ephemeral: true });
+          let count = 0;
+
+          for (const m of selected.values()) {
+            try {
+              if (sub === "remove-all") await m.roles.remove(role);
+              else await m.roles.add(role);
+              count++;
+            } catch (error) {
+              console.error(error);
+            }
+          }
+
+          return interaction.editReply(`Updated ${count} members.`);
+        }
+
+        case "color": {
+          const hex = options.getString("hex");
+          if (!/^#[0-9A-Fa-f]{6}$/.test(hex)) {
+            return reply("Use a valid hex color, such as #FF0000.");
+          }
+          await role.setColor(hex);
+          return reply(`Changed ${role.name} color to ${hex}.`);
+        }
+
+        case "icon":
+          return reply("Role icon upload is not implemented yet.");
+      }
+    }
+
+    if (!member.permissions.has(PermissionFlagsBits.ModerateMembers) &&
+        !member.permissions.has(PermissionFlagsBits.Administrator)) {
+      return reply("You need the Moderate Members permission to use moderation commands.");
+    }
+
     const user = options.getUser("user");
     const target = user ? await guild.members.fetch(user.id).catch(() => null) : null;
     const reason = options.getString("reason") || "No reason provided";
@@ -134,22 +284,21 @@ client.on("interactionCreate", async interaction => {
       return reply("You cannot use this command on yourself or the bot.");
     }
 
-    if (target && target.roles.highest.position >= botMember.roles.highest.position &&
-        guild.ownerId !== client.user.id) {
+    if (target && target.roles.highest.position >= botMember.roles.highest.position) {
       return reply("My highest role must be above the target's highest role.");
     }
 
     switch (commandName) {
       case "ban":
-        if (!member.permissions.has(PermissionFlagsBits.BanMembers)) return reply("You need Ban Members permission.");
-        if (!target.bannable) return reply("I cannot ban this member. Check my role position and permissions.");
+        if (!member.permissions.has(PermissionFlagsBits.BanMembers)) return reply("Ban Members permission required.");
+        if (!target.bannable) return reply("I cannot ban this member.");
         await target.ban({ reason });
-        return reply(`Banned **${user.tag}**. Reason: ${reason}`);
+        return reply(`Banned ${user.tag}. Reason: ${reason}`);
 
       case "unban": {
-        if (!member.permissions.has(PermissionFlagsBits.BanMembers)) return reply("You need Ban Members permission.");
+        if (!member.permissions.has(PermissionFlagsBits.BanMembers)) return reply("Ban Members permission required.");
         const id = options.getString("userid");
-        await guild.members.unban(id, options.getString("reason") || "Unbanned by moderator");
+        await guild.members.unban(id, reason);
         return reply(`Unbanned user ID: ${id}`);
       }
 
@@ -157,30 +306,37 @@ client.on("interactionCreate", async interaction => {
         if (!member.permissions.has(PermissionFlagsBits.Administrator)) return reply("Administrator permission required.");
         if (!options.getBoolean("confirm")) return reply("Confirmation required.");
         const bans = await guild.bans.fetch();
+        await interaction.deferReply({ ephemeral: true });
+        let count = 0;
         for (const ban of bans.values()) {
-          await guild.members.unban(ban.user.id, "Bulk unban by server administrator");
+          try {
+            await guild.members.unban(ban.user.id, "Bulk unban by administrator");
+            count++;
+          } catch (error) {
+            console.error(error);
+          }
         }
-        return reply(`Unbanned ${bans.size} users.`);
+        return interaction.editReply(`Unbanned ${count} users.`);
       }
 
       case "kick":
-        if (!member.permissions.has(PermissionFlagsBits.KickMembers)) return reply("You need Kick Members permission.");
+        if (!member.permissions.has(PermissionFlagsBits.KickMembers)) return reply("Kick Members permission required.");
         if (!target.kickable) return reply("I cannot kick this member.");
         await target.kick(reason);
-        return reply(`Kicked **${user.tag}**. Reason: ${reason}`);
+        return reply(`Kicked ${user.tag}.`);
 
       case "timeout":
       case "mute": {
-        const minutes = options.getInteger("minutes");
         if (!member.permissions.has(PermissionFlagsBits.ModerateMembers)) return reply("Moderate Members permission required.");
+        const minutes = options.getInteger("minutes");
         await target.timeout(minutes * 60000, reason);
-        return reply(`Timed out **${user.tag}** for ${minutes} minutes.`);
+        return reply(`Timed out ${user.tag} for ${minutes} minutes.`);
       }
 
       case "untimeout":
       case "unmute":
         await target.timeout(null, "Timeout removed by moderator");
-        return reply(`Removed timeout from **${user.tag}**.`);
+        return reply(`Removed timeout from ${user.tag}.`);
 
       case "warn": {
         const data = loadWarnings();
@@ -192,7 +348,7 @@ client.on("interactionCreate", async interaction => {
           date: new Date().toISOString()
         });
         saveWarnings(data);
-        return reply(`Warned **${user.tag}**. Reason: ${reason}`);
+        return reply(`Warned ${user.tag}. Reason: ${reason}`);
       }
 
       case "warnings": {
@@ -207,14 +363,14 @@ client.on("interactionCreate", async interaction => {
         const data = loadWarnings();
         delete data[`${guild.id}_${user.id}`];
         saveWarnings(data);
-        return reply(`Cleared warnings for **${user.tag}**.`);
+        return reply(`Cleared warnings for ${user.tag}.`);
       }
 
       case "purge": {
         if (!member.permissions.has(PermissionFlagsBits.ManageMessages)) return reply("Manage Messages permission required.");
         const amount = options.getInteger("amount");
         const deleted = await channel.bulkDelete(amount, true);
-        return reply(`Deleted ${deleted.size} messages. Messages older than 14 days cannot be bulk deleted.`);
+        return reply(`Deleted ${deleted.size} messages.`);
       }
 
       case "lock":
@@ -250,19 +406,19 @@ client.on("interactionCreate", async interaction => {
           c.type === ChannelType.GuildText ||
           c.type === ChannelType.GuildAnnouncement
         );
+        await interaction.deferReply({ ephemeral: true });
         for (const ch of channels.values()) {
           await ch.permissionOverwrites.edit(guild.roles.everyone, {
             SendMessages: locked ? false : null
-          }).catch(() => {});
+          }).catch(console.error);
         }
-        return reply(`${locked ? "Locked" : "Unlocked"} ${channels.size} text channels.`);
+        return interaction.editReply(`${locked ? "Locked" : "Unlocked"} ${channels.size} text channels.`);
       }
 
       case "nickname": {
         if (!member.permissions.has(PermissionFlagsBits.ManageNicknames)) return reply("Manage Nicknames permission required.");
-        const name = options.getString("name");
-        await target.setNickname(name, "Nickname changed by moderator");
-        return reply(`Changed **${user.tag}**'s nickname.`);
+        await target.setNickname(options.getString("name"), "Nickname changed by moderator");
+        return reply(`Changed ${user.tag}'s nickname.`);
       }
 
       case "history": {
@@ -277,7 +433,10 @@ client.on("interactionCreate", async interaction => {
   } catch (error) {
     console.error(error);
     if (!interaction.replied && !interaction.deferred) {
-      await interaction.reply({ content: "Command failed. Check bot permissions, role hierarchy, and logs.", ephemeral: true });
+      await interaction.reply({
+        content: "Command failed. Check bot permissions, role hierarchy, and logs.",
+        ephemeral: true
+      }).catch(console.error);
     }
   }
 });
@@ -290,7 +449,10 @@ async function start() {
   const rest = new REST({ version: "10" }).setToken(process.env.DISCORD_TOKEN);
 
   await rest.put(
-    Routes.applicationGuildCommands(process.env.CLIENT_ID, process.env.GUILD_ID),
+    Routes.applicationGuildCommands(
+      process.env.CLIENT_ID,
+      process.env.GUILD_ID
+    ),
     { body: commands }
   );
 
@@ -298,3 +460,5 @@ async function start() {
 }
 
 start().catch(console.error);
+
+
