@@ -1,4 +1,3 @@
-
 require("dotenv").config();
 
 const fs = require("fs");
@@ -11,6 +10,7 @@ const {
   PermissionFlagsBits,
   ChannelType
 } = require("discord.js");
+const { buildEventCommand, handleEventCommand } = require("./eventCommands");
 
 const client = new Client({
   intents: [
@@ -132,12 +132,31 @@ const commands = [
     .addSubcommand(s => s.setName("list").setDescription("List server roles"))
 ].map(c => c.toJSON());
 
+commands.push(buildEventCommand().toJSON());
+
 client.once("ready", () => {
   console.log(`Ghosted online as ${client.user.tag}`);
 });
 
 client.on("interactionCreate", async interaction => {
   if (!interaction.isChatInputCommand() || !interaction.guild) return;
+
+  if (interaction.commandName === "event") {
+    try {
+      await handleEventCommand(interaction);
+    } catch (error) {
+      console.error(error);
+      const message = error.message || "Event command failed. Check bot permissions and logs.";
+      if (interaction.deferred) {
+        await interaction.editReply({ content: message }).catch(console.error);
+      } else if (interaction.replied) {
+        await interaction.followUp({ content: message, ephemeral: true }).catch(console.error);
+      } else {
+        await interaction.reply({ content: message, ephemeral: true }).catch(console.error);
+      }
+    }
+    return;
+  }
 
   const { commandName, guild, member, options, channel } = interaction;
   const botMember = guild.members.me;
@@ -460,5 +479,3 @@ async function start() {
 }
 
 start().catch(console.error);
-
-
