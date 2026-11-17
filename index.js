@@ -2,6 +2,8 @@
 require("dotenv").config();
 
 const fs = require("fs");
+const eventCommands = require("./eventCommands");
+
 const {
   Client,
   GatewayIntentBits,
@@ -132,6 +134,9 @@ const commands = [
     .addSubcommand(s => s.setName("list").setDescription("List server roles"))
 ].map(c => c.toJSON());
 
+// Register event command
+commands.push(eventCommands.commandData.toJSON());
+
 client.once("ready", () => {
   console.log(`Ghosted online as ${client.user.tag}`);
 });
@@ -144,6 +149,11 @@ client.on("interactionCreate", async interaction => {
   const reply = content => interaction.reply({ content, ephemeral: true });
 
   try {
+    // EVENT COMMAND SYSTEM
+    if (commandName === "event") {
+      return await eventCommands.execute(interaction);
+    }
+
     if (commandName === "role") {
       if (!member.permissions.has(PermissionFlagsBits.ManageRoles)) {
         return reply("You need Manage Roles permission.");
@@ -460,5 +470,6 @@ async function start() {
 }
 
 start().catch(console.error);
+
 
 
